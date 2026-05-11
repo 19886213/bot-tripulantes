@@ -5,7 +5,7 @@ from pymongo import MongoClient
 
 # --- CONFIGURACIÓN ---
 # REEMPLAZA ESTO POR EL TOKEN NUEVO QUE TE DIO BOTFATHER:
-TOKEN = "8355996836:AAHuk2txzzH5j_i4JFExUwI8q1_dcHqVnQI"
+TOKEN = "8355996836:AAGlfd53hu4OQbYZMMTlf98kBOfZOLtXv9s"
 
 # Tu link de MongoDB ya configurado:
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
