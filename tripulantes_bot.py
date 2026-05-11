@@ -5,7 +5,7 @@ from pymongo import MongoClient
 import os
 
 # TOKEN Y CONEXIÓN
-TOKEN = "8770392349:AAFaJW4zHfNohY3UUvC3pVHTd1DPmzG7_5o"
+TOKEN = "8770392349:AAFD3Q_-wNo4NDjESzSHJfje2KtGIxD-kp4"
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 
 client = MongoClient(MONGO_URI)
