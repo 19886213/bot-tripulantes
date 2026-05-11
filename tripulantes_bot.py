@@ -3,11 +3,10 @@ from telebot import types
 from datetime import datetime
 from pymongo import MongoClient
 
-# --- CONFIGURACIÓN ---
-# REEMPLAZA ESTO POR EL TOKEN NUEVO QUE TE DIO BOTFATHER:
+# 1. PEGA AQUÍ TU NUEVO TOKEN DE BOTFATHER
 TOKEN = "8355996836:AAGlfd53hu4OQbYZMMTlf98kBOfZOLtXv9s"
 
-# Tu link de MongoDB ya configurado:
+# 2. TU LINK DE MONGODB CON LA CLAVE 17954966
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 
 client = MongoClient(MONGO_URI)
@@ -23,11 +22,14 @@ DATOS_INICIALES = {
 }
 
 def obtener_personal():
-    doc = coleccion.find_one({"id": "data_principal"})
-    if not doc:
-        coleccion.insert_one({"id": "data_principal", "datos": DATOS_INICIALES})
+    try:
+        doc = coleccion.find_one({"id": "data_principal"})
+        if not doc:
+            coleccion.insert_one({"id": "data_principal", "datos": DATOS_INICIALES})
+            return DATOS_INICIALES
+        return doc["datos"]
+    except:
         return DATOS_INICIALES
-    return doc["datos"]
 
 def guardar_personal(datos):
     coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": datos}}, upsert=True)
@@ -43,12 +45,12 @@ def calcular_vencimiento(f_str):
 def cmd_start(message):
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("📋 Lista General", "🚨 Alertas Críticas")
-    bot.send_message(message.chat.id, "👨‍✈️ **Control de Vuelos con MongoDB Activo**", reply_markup=m, parse_mode="Markdown")
+    bot.send_message(message.chat.id, "👨‍✈️ **Control de Vuelos Activo**", reply_markup=m, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda msg: msg.text == "📋 Lista General")
 def cmd_lista(message):
     personal = obtener_personal()
-    res = "📊 **REPORTE DESDE LA NUBE**\n"
+    res = "📊 **REPORTE ACTUALIZADO**\n"
     for cat, gente in personal.items():
         res += f"\n┏━━ **{cat}**\n"
         for i, (n, f) in enumerate(gente.items(), 1):
@@ -65,7 +67,7 @@ def cmd_vuelo(message):
             if nombre in personal[cat]:
                 personal[cat][nombre] = datetime.now().strftime("%Y-%m-%d")
                 guardar_personal(personal)
-                bot.reply_to(message, f"✅ **{nombre}** actualizado en la nube.")
+                bot.reply_to(message, f"✅ **{nombre}** actualizado.")
                 return
         bot.reply_to(message, "❌ No encontrado.")
     except:
@@ -73,4 +75,5 @@ def cmd_vuelo(message):
 
 print("INICIANDO BOT...")
 bot.infinity_polling()
-()
+
+
