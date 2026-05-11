@@ -4,10 +4,10 @@ from datetime import datetime
 from pymongo import MongoClient
 
 # --- CONFIGURACIÓN ---
-TOKEN = "8355996836:AAH5M84faJAB1N2d9Y4YP5BBLk9n3E0_1Ic"
+# REEMPLAZA ESTO POR EL TOKEN NUEVO QUE TE DIO BOTFATHER:
+TOKEN = "8355996836:AAHuk2txzzH5j_i4JFExUwI8q1_dcHqVnQI"
 
-# AQUÍ YA PUSE TU LINK DE LA FOTO. 
-# SOLO CAMBIA 'TU_PASSWORD_AQUI' POR LA CLAVE QUE CREASTE.
+# Tu link de MongoDB ya configurado:
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 
 client = MongoClient(MONGO_URI)
@@ -15,7 +15,6 @@ db = client['sistema_vuelos']
 coleccion = db['tripulantes']
 bot = telebot.TeleBot(TOKEN)
 
-# Datos iniciales para cargar la primera vez
 DATOS_INICIALES = {
     "CAPITANES DE NAVE": {"CAMPOCLARO": "2026-05-07", "MANAUS": "2026-05-07", "CAMORUCO": "2026-05-08", "SAURIO": "2026-04-15", "MONARCA": "2026-05-06"},
     "COPILOTOS": {"TÁRTARO": "2021-09-01", "CASUPO": "2026-05-08", "HUESO": "2026-05-04", "CHAGUARAMO": "2026-04-23", "DORADO": "2026-05-04", "CHAMERO": "2026-04-15", "ATLÁNTICO": "2026-04-15", "CURAGUA": "2026-05-07", "YOCOIMA": "2026-05-06", "MACARIO": "2026-04-15", "GÜIGÜE": "2026-05-08", "ÉBANO": "2026-05-07", "PAMPATAR": "2026-04-15"},
@@ -24,15 +23,11 @@ DATOS_INICIALES = {
 }
 
 def obtener_personal():
-    try:
-        doc = coleccion.find_one({"id": "data_principal"})
-        if not doc:
-            coleccion.insert_one({"id": "data_principal", "datos": DATOS_INICIALES})
-            return DATOS_INICIALES
-        return doc["datos"]
-    except Exception as e:
-        print(f"Error DB: {e}")
+    doc = coleccion.find_one({"id": "data_principal"})
+    if not doc:
+        coleccion.insert_one({"id": "data_principal", "datos": DATOS_INICIALES})
         return DATOS_INICIALES
+    return doc["datos"]
 
 def guardar_personal(datos):
     coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": datos}}, upsert=True)
@@ -48,7 +43,7 @@ def calcular_vencimiento(f_str):
 def cmd_start(message):
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add("📋 Lista General", "🚨 Alertas Críticas")
-    bot.send_message(message.chat.id, "👨‍✈️ **Control de Vuelos con Base de Datos Activo**", reply_markup=m, parse_mode="Markdown")
+    bot.send_message(message.chat.id, "👨‍✈️ **Control de Vuelos con MongoDB Activo**", reply_markup=m, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda msg: msg.text == "📋 Lista General")
 def cmd_lista(message):
@@ -70,11 +65,12 @@ def cmd_vuelo(message):
             if nombre in personal[cat]:
                 personal[cat][nombre] = datetime.now().strftime("%Y-%m-%d")
                 guardar_personal(personal)
-                bot.reply_to(message, f"✅ **{nombre}** actualizado permanentemente en la nube.")
+                bot.reply_to(message, f"✅ **{nombre}** actualizado en la nube.")
                 return
         bot.reply_to(message, "❌ No encontrado.")
     except:
         bot.reply_to(message, "Usa: `/vuelo NOMBRE`")
 
-print("INICIANDO CON MONGODB...")
+print("INICIANDO BOT...")
 bot.infinity_polling()
+()
