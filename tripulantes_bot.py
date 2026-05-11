@@ -2,39 +2,49 @@ import telebot
 from telebot import types
 from datetime import datetime
 from pymongo import MongoClient
+import os
 
-# 1. CONFIGURACIÓN
+# --- CONFIGURACIÓN ---
 TOKEN = "8770392349:AAEcYxLOy_42HZu1SOCc3srH1a2qBP8L8rY"
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 
-client = MongoClient(MONGO_URI)
-db = client['sistema_vuelos']
-coleccion = db['tripulantes']
-bot = telebot.TeleBot(TOKEN)
+try:
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    db = client['sistema_vuelos']
+    coleccion = db['tripulantes']
+    bot = telebot.TeleBot(TOKEN)
+    print("✅ Conexión exitosa a MongoDB")
+except Exception as e:
+    print(f"❌ Error de conexión: {e}")
 
 def calcular_vencimiento(f_str):
-    d = (datetime.now() - datetime.strptime(f_str, "%Y-%m-%d")).days
-    if d >= 45: return "🔴", d
-    if d >= 35: return "🟡", d
-    return "🟢", d
+    try:
+        d = (datetime.now() - datetime.strptime(f_str, "%Y-%m-%d")).days
+        if d >= 45: return "🔴", d
+        if d >= 35: return "🟡", d
+        return "🟢", d
+    except:
+        return "⚪", 0
 
-# --- FUNCIÓN 1: MENÚ PRINCIPAL ---
+# --- MENÚ ---
 @bot.message_handler(commands=['start', 'menu'])
 def cmd_start(message):
-    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn_lista = types.KeyboardButton("📋 Lista General")
-    btn_rojo = types.KeyboardButton("🚨 Alertas Críticas")
-    btn_amarillo = types.KeyboardButton("⚠️ Próximos a Vencer")
-    btn_ayuda = types.KeyboardButton("❓ Ayuda")
-    m.add(btn_lista, btn_rojo, btn_amarillo, btn_ayuda)
-    bot.send_message(message.chat.id, "👨‍✈️ **Control de Tripulación Activo**\nSeleccione una opción:", reply_markup=m, parse_mode="Markdown")
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("📋 Lista General", "🚨 Alertas Críticas")
+    markup.row("⚠️ Próximos a Vencer", "❓ Ayuda")
+    bot.send_message(message.chat.id, "👋 **¡Bot Conectado!**\nUsa los botones para consultar.", reply_markup=markup, parse_mode="Markdown")
 
-# --- FUNCIÓN 2: LISTA GENERAL ---
+# --- LISTA GENERAL ---
 @bot.message_handler(func=lambda msg: msg.text == "📋 Lista General")
 def cmd_lista(message):
+    bot.send_chat_action(message.chat.id, 'typing')
     doc = coleccion.find_one({"id": "data_principal"})
-    personal = doc["datos"]
-    res = "📊 **REPORTE COMPLETO**\n"
+    if not doc:
+        bot.send_message(message.chat.id, "❌ No se encontraron datos.")
+        return
+    
+    personal = doc.get("datos", {})
+    res = "📊 **REPORTE ACTUAL**\n"
     for cat, gente in personal.items():
         res += f"\n┏━━ **{cat}**\n"
         for n, f in gente.items():
@@ -42,49 +52,42 @@ def cmd_lista(message):
             res += f"┃ {e} **{n}**: {d}d\n"
     bot.send_message(message.chat.id, res, parse_mode="Markdown")
 
-# --- FUNCIÓN 3: ALERTAS CRÍTICAS (ROJO) ---
+# --- ALERTA ROJA ---
 @bot.message_handler(func=lambda msg: msg.text == "🚨 Alertas Críticas")
-def cmd_alertas_rojo(message):
+def cmd_rojo(message):
     doc = coleccion.find_one({"id": "data_principal"})
-    personal = doc["datos"]
-    res = "🔴 **ALERTAS CRÍTICAS (45+ DÍAS)**\n"
+    personal = doc.get("datos", {})
+    res = "🔴 **ALERTAS CRÍTICAS (45+ días)**\n"
     hay = False
     for cat, gente in personal.items():
         for n, f in gente.items():
             e, d = calcular_vencimiento(f)
             if d >= 45:
-                res += f"📍 {n} ({cat}): {d} días\n"
+                res += f"⚠️ {n}: {d} días\n"
                 hay = True
-    bot.send_message(message.chat.id, res if hay else "✅ No hay alertas críticas.", parse_mode="Markdown")
+    bot.send_message(message.chat.id, res if hay else "✅ Todo en orden (45+).", parse_mode="Markdown")
 
-# --- FUNCIÓN 4: ALERTAS PREVENTIVAS (AMARILLO) ---
+# --- ALERTA AMARILLA ---
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ Próximos a Vencer")
-def cmd_alertas_amarillo(message):
+def cmd_amarillo(message):
     doc = coleccion.find_one({"id": "data_principal"})
-    personal = doc["datos"]
-    res = "🟡 **PRÓXIMOS A VENCER (35-44 DÍAS)**\n"
+    personal = doc.get("datos", {})
+    res = "🟡 **PRÓXIMOS A VENCER (35-44 días)**\n"
     hay = False
     for cat, gente in personal.items():
         for n, f in gente.items():
             e, d = calcular_vencimiento(f)
             if 35 <= d < 45:
-                res += f"🔸 {n} ({cat}): {d} días\n"
+                res += f"🔸 {n}: {d} días\n"
                 hay = True
-    bot.send_message(message.chat.id, res if hay else "✅ No hay personal en preventivo.", parse_mode="Markdown")
+    bot.send_message(message.chat.id, res if hay else "✅ Todo en orden (35-44).", parse_mode="Markdown")
 
-# --- FUNCIÓN 5: AYUDA ---
+# --- AYUDA ---
 @bot.message_handler(func=lambda msg: msg.text == "❓ Ayuda")
 def cmd_ayuda(message):
-    texto = (
-        "❓ **GUÍA DE USO**\n\n"
-        "🔴 **Crítico**: 45 días o más.\n"
-        "🟡 **Preventivo**: 35 a 44 días.\n"
-        "🟢 **Operativo**: Menos de 35 días.\n\n"
-        "👉 Para reiniciar a alguien use:\n`/vuelo NOMBRE`"
-    )
-    bot.send_message(message.chat.id, texto, parse_mode="Markdown")
+    bot.send_message(message.chat.id, "💡 **Instrucciones:**\n1. Usa los botones para ver listas.\n2. Escribe `/vuelo NOMBRE` para resetear.\n3. Si el bot no responde, pulsa /start.", parse_mode="Markdown")
 
-# --- FUNCIÓN 6: ACTUALIZAR VUELO ---
+# --- VUELO ---
 @bot.message_handler(commands=['vuelo'])
 def cmd_vuelo(message):
     try:
@@ -95,11 +98,12 @@ def cmd_vuelo(message):
             if nombre in personal[cat]:
                 personal[cat][nombre] = datetime.now().strftime("%Y-%m-%d")
                 coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
-                bot.reply_to(message, f"✅ **{nombre}** actualizado a 0 días.")
+                bot.reply_to(message, f"✅ {nombre} actualizado.")
                 return
         bot.reply_to(message, "❌ No encontrado.")
     except:
-        bot.reply_to(message, "Usa: `/vuelo NOMBRE`")
+        bot.reply_to(message, "Escribe: `/vuelo NOMBRE`")
 
-print("BOT COMPLETO INICIADO...")
+print("🚀 BOT INICIADO Y ESCUCHANDO...")
 bot.infinity_polling()
+
