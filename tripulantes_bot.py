@@ -6,7 +6,7 @@ from pymongo import MongoClient
 # 1. PEGA AQUÍ TU NUEVO TOKEN DE BOTFATHER
 TOKEN = "8355996836:AAGlfd53hu4OQbYZMMTlf98kBOfZOLtXv9s"
 
-# 2. TU LINK DE MONGODB CON LA CLAVE 17954966
+# 2. TU LINK DE MONGODB (CLAVE 17954966)
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 
 client = MongoClient(MONGO_URI)
@@ -14,6 +14,7 @@ db = client['sistema_vuelos']
 coleccion = db['tripulantes']
 bot = telebot.TeleBot(TOKEN)
 
+# Datos iniciales para la base de datos
 DATOS_INICIALES = {
     "CAPITANES DE NAVE": {"CAMPOCLARO": "2026-05-07", "MANAUS": "2026-05-07", "CAMORUCO": "2026-05-08", "SAURIO": "2026-04-15", "MONARCA": "2026-05-06"},
     "COPILOTOS": {"TÁRTARO": "2021-09-01", "CASUPO": "2026-05-08", "HUESO": "2026-05-04", "CHAGUARAMO": "2026-04-23", "DORADO": "2026-05-04", "CHAMERO": "2026-04-15", "ATLÁNTICO": "2026-04-15", "CURAGUA": "2026-05-07", "YOCOIMA": "2026-05-06", "MACARIO": "2026-04-15", "GÜIGÜE": "2026-05-08", "ÉBANO": "2026-05-07", "PAMPATAR": "2026-04-15"},
@@ -50,7 +51,7 @@ def cmd_start(message):
 @bot.message_handler(func=lambda msg: msg.text == "📋 Lista General")
 def cmd_lista(message):
     personal = obtener_personal()
-    res = "📊 **REPORTE ACTUALIZADO**\n"
+    res = "📊 **REPORTE DESDE MONGODB**\n"
     for cat, gente in personal.items():
         res += f"\n┏━━ **{cat}**\n"
         for i, (n, f) in enumerate(gente.items(), 1):
@@ -75,5 +76,6 @@ def cmd_vuelo(message):
 
 print("INICIANDO BOT...")
 bot.infinity_polling()
+
 
 
