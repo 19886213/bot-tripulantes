@@ -2,8 +2,27 @@ import telebot
 from telebot import types
 from datetime import datetime
 from pymongo import MongoClient
+from flask import Flask
+from threading import Thread
+import os
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE FLASK (Para que Render no dé error de puerto) ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot de Tripulantes está en línea!"
+
+def run():
+    # Render asigna un puerto dinámico, lo leemos de las variables de entorno
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- CONFIGURACIÓN DEL BOT ---
 TOKEN = "8770392349:AAEcYxLOy_42HZu1SOCc3srH1a2qBP8L8rY"
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 
@@ -26,69 +45,35 @@ def calcular_vencimiento(f_str):
 @bot.message_handler(commands=['start', 'menu'])
 def cmd_start(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Definimos los botones exactamente como los compararemos después
-    btn1 = types.KeyboardButton("📋 Lista General")
-    btn2 = types.KeyboardButton("🚨 Alertas Críticas")
-    btn3 = types.KeyboardButton("⚠️ Próximos a Vencer")
-    btn4 = types.KeyboardButton("❓ Ayuda")
-    markup.add(btn1, btn2)
-    markup.add(btn3, btn4)
-    bot.send_message(message.chat.id, "👨‍✈️ **SISTEMA ACTIVO**\nSeleccione una opción del menú:", reply_markup=markup, parse_mode="Markdown")
+    markup.add("📋 Lista General", "🚨 Alertas Críticas")
+    markup.add("⚠️ Próximos a Vencer", "❓ Ayuda")
+    bot.send_message(message.chat.id, "👨‍✈️ **SISTEMA ACTIVO**", reply_markup=markup, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda msg: True)
 def manejar_mensajes(message):
     doc = coleccion.find_one({"id": "data_principal"})
-    if not doc:
-        bot.send_message(message.chat.id, "❌ Error: No se encontraron datos en MongoDB.")
-        return
-    
+    if not doc: return
     personal = doc.get("datos", {})
-    texto_final = ""
-
-    # Usamos "in" por si el texto trae emojis o espacios extra
-    text = message.text
-
-    if "Lista General" in text:
-        texto_final = "📊 **REPORTE COMPLETO**\n"
-        for cat, gente in personal.items():
-            texto_final += f"\n┏━━ **{cat}**\n"
-            for i, (nombre, fecha) in enumerate(gente.items(), 1):
-                emoji, dias, _ = calcular_vencimiento(fecha)
-                texto_final += f"┃ {i}. {emoji} **{nombre}**: {dias}d — Últ: {fecha}\n"
     
-    elif "Alertas Críticas" in text:
-        texto_final = "🔴 **ESTADO CRÍTICO (45+ días)**\n\n"
+    if "Lista General" in message.text:
+        res = "📊 **REPORTE COMPLETO**\n"
+        for cat, gente in personal.items():
+            res += f"\n┏━━ **{cat}**\n"
+            for n, f in gente.items():
+                e, d, _ = calcular_vencimiento(f)
+                res += f"┃ {e} **{n}**: {d}d — {f}\n"
+        bot.send_message(message.chat.id, res, parse_mode="Markdown")
+    
+    elif "Alertas Críticas" in message.text:
+        res = "🔴 **PERSONAL CRÍTICO**\n\n"
         encontrado = False
         for cat, gente in personal.items():
-            for nombre, fecha in gente.items():
-                emoji, dias, estado = calcular_vencimiento(fecha)
-                if estado == "CRÍTICO":
-                    texto_final += f"📍 **{nombre}**: {dias}d (Últ: {fecha})\n"
+            for n, f in gente.items():
+                e, d, s = calcular_vencimiento(f)
+                if s == "CRÍTICO":
+                    res += f"📍 **{n}**: {d}d\n"
                     encontrado = True
-        if not encontrado: texto_final = "✅ No hay personal en estado crítico."
-
-    elif "Próximos a Vencer" in text:
-        texto_final = "🟡 **PRÓXIMOS A VENCER (35-44 días)**\n\n"
-        encontrado = False
-        for cat, gente in personal.items():
-            for nombre, fecha in gente.items():
-                emoji, dias, estado = calcular_vencimiento(fecha)
-                if estado == "PREVENTIVO":
-                    texto_final += f"🔸 **{nombre}**: {dias}d (Últ: {fecha})\n"
-                    encontrado = True
-        if not encontrado: texto_final = "✅ No hay personal próximo a vencer."
-
-    elif "Ayuda" in text:
-        texto_final = (
-            "❓ **AYUDA Y COMANDOS**\n\n"
-            "• Escribe `/vuelo NOMBRE` para actualizar la fecha de alguien a hoy.\n"
-            "• **Verde (🟢):** Menos de 35 días.\n"
-            "• **Amarillo (🟡):** Entre 35 y 44 días.\n"
-            "• **Rojo (🔴):** 45 días o más."
-        )
-
-    if texto_final:
-        bot.send_message(message.chat.id, texto_final, parse_mode="Markdown")
+        bot.send_message(message.chat.id, res if encontrado else "✅ Sin alertas.")
 
 @bot.message_handler(commands=['vuelo'])
 def cmd_vuelo(message):
@@ -101,13 +86,18 @@ def cmd_vuelo(message):
                 hoy = datetime.now().strftime("%d/%m/%Y")
                 personal[cat][nombre] = hoy
                 coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
-                bot.reply_to(message, f"✅ **{nombre}** actualizado a hoy: {hoy}")
+                bot.reply_to(message, f"✅ **{nombre}** reseteado a 0 días.")
                 return
-        bot.reply_to(message, "❌ Nombre no encontrado.")
     except:
-        bot.reply_to(message, "Usa: `/vuelo NOMBRE` (Ej: /vuelo CAMPOCLARO)")
+        bot.reply_to(message, "Usa: /vuelo NOMBRE")
 
-bot.infinity_polling()
+# --- INICIO ---
+if __name__ == "__main__":
+    keep_alive()  # Esto activa el servidor web para Render
+    print("🚀 Bot iniciado...")
+    bot.infinity_polling()
+
+
 
 
 
