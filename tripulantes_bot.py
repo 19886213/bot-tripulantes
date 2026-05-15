@@ -14,7 +14,6 @@ def home():
     return "Bot de Control de Tripulantes: Activo"
 
 def run():
-    # Render usa el puerto 10000 por defecto para servicios web
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -23,7 +22,6 @@ def keep_alive():
     t.start()
 
 # --- 2. CONFIGURACIÓN DEL BOT Y BASE DE DATOS ---
-# El TOKEN se lee desde 'Environment Variables' en Render
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 
@@ -115,35 +113,40 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO PARA ACTUALIZAR VUELO (SÚPER INTELIGENTE) ---
+# --- 6. COMANDO PARA ACTUALIZAR VUELO (CON CONFIRMACIÓN DE MONGODB) ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
-        # Extraemos el nombre enviado, quitamos espacios a los lados y lo pasamos a mayúsculas
         nombre_buscar = message.text.split(maxsplit=1)[1].strip().upper()
         doc = coleccion.find_one({"id": "data_principal"})
         personal = doc["datos"]
         encontrado = False
 
         for cat in personal:
-            # Creamos un diccionario temporal pasando las llaves de la DB a mayúsculas y sin espacios
-            # Esto mapea: {"CAMORUCO": "Camoruco "} o {"CAMORUCO": "camoruco"}
             nombres_normalizados = {k.strip().upper(): k for k in personal[cat].keys()}
             
             if nombre_buscar in nombres_normalizados:
-                # Recuperamos el nombre exacto original que está guardado en tu Mongo
                 key_original = nombres_normalizados[nombre_buscar]
-                # Ponemos la fecha de hoy
                 personal[cat][key_original] = datetime.now().strftime("%d/%m/%Y")
                 encontrado = True
                 break
         
         if encontrado:
-            # Guardamos los cambios en MongoDB
-            coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
-            bot.reply_to(message, f"✅ **{nombre_buscar}** actualizado con éxito a la fecha de hoy.")
+            # Enviamos la actualización a MongoDB y guardamos el resultado técnico de la operación
+            resultado_db = coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
+            
+            # Verificamos si MongoDB realmente modificó o reconoció el documento modificado
+            if resultado_db.modified_count > 0 or resultado_db.matched_count > 0:
+                bot.reply_to(
+                    message, 
+                    f"✅ **{nombre_buscar}** actualizado con éxito.\n"
+                    f"💾 *Cambio confirmado y guardado en la Base de Datos.*", 
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.reply_to(message, "⚠️ El nombre coincide, pero hubo un problema al escribir en la Base de Datos.")
         else:
-            bot.reply_to(message, f"❌ El nombre **{nombre_buscar}** no se encontró en la lista. Verifica cómo está escrito en la base de datos.")
+            bot.reply_to(message, f"❌ El nombre **{nombre_buscar}** no se encontró en la lista. Verifica la escritura en la DB.")
             
     except IndexError:
         bot.reply_to(message, "⚠️ Formato incorrecto. Usa: `/vuelo NOMBRE`", parse_mode="Markdown")
@@ -152,8 +155,8 @@ def reset_vuelo(message):
 if __name__ == "__main__":
     keep_alive()
     print("🚀 Bot iniciado...")
-    # skip_pending=True limpia el historial para evitar el Error 409 Conflict
     bot.infinity_polling(skip_pending=True)
+
 
 
 
