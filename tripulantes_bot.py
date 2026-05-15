@@ -7,10 +7,9 @@ from threading import Thread
 import os
 import logging
 
-# Configurar logs básicos para ver errores en Render
 logging.basicConfig(level=logging.INFO)
 
-# --- 1. SERVIDOR WEB (En hilo secundario para mantener el bot 'Live') ---
+# --- 1. SERVIDOR WEB ---
 app = Flask('')
 
 @app.route('/')
@@ -18,21 +17,18 @@ def home():
     return "Bot de Control de Tripulantes: Activo"
 
 def run_flask():
-    # Render usa el puerto 10000 por defecto para servicios web
     port = int(os.environ.get("PORT", 10000))
-    # 'threaded=True' ayuda a manejar múltiples peticiones HTTP de Render sin congelarse
     app.run(host='0.0.0.0', port=port, threaded=True)
 
 def keep_alive():
     t = Thread(target=run_flask)
-    t.daemon = True  # Permite que el hilo muera si el proceso principal se detiene
+    t.daemon = True
     t.start()
 
 # --- 2. CONFIGURACIÓN DEL BOT Y BASE DE DATOS ---
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 
-# Conexión a MongoDB
 MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retryWrites=true&w=majority&appName=Alejosmv"
 client = MongoClient(MONGO_URI)
 db = client['sistema_vuelos']
@@ -64,18 +60,18 @@ def send_welcome(message):
         parse_mode="Markdown"
     )
 
-# --- 5. MANEJADOR DE MENSAJES (BOTONES) ---
+# --- 5. MANEJADOR DE MENSAJES ---
 @bot.message_handler(func=lambda msg: True)
 def handle_all_messages(message):
-    doc = coleccion.find_one({"id": "data_principal"})
+    # Intentar buscar por id principal, si no, agarra el primer documento disponible
+    doc = coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
     if not doc:
-        bot.reply_to(message, "❌ Error: No se encontró el documento 'data_principal' en la DB.")
+        bot.reply_to(message, "❌ Error: La colección de MongoDB está completamente vacía.")
         return
     
     personal = doc.get("datos", {})
     text = message.text
 
-    # BOTÓN: LISTA GENERAL
     if "Lista General" in text:
         res = "📊 **REPORTE COMPLETO**\n"
         for cat, gente in personal.items():
@@ -85,7 +81,6 @@ def handle_all_messages(message):
                 res += f"┃ {e} **{n}**: {d}d (v: {f})\n"
         bot.send_message(message.chat.id, res, parse_mode="Markdown")
 
-    # BOTÓN: ALERTAS CRÍTICAS
     elif "Alertas Críticas" in text:
         res = "🔴 **ESTADO CRÍTICO (45+ días)**\n\n"
         encontrado = False
@@ -97,7 +92,6 @@ def handle_all_messages(message):
                     encontrado = True
         bot.send_message(message.chat.id, res if encontrado else "✅ No hay personal en estado crítico.")
 
-    # BOTÓN: PRÓXIMOS A VENCER
     elif "Próximos a Vencer" in text:
         res = "🟡 **PRÓXIMOS A VENCER (35-44 días)**\n\n"
         encontrado = False
@@ -109,7 +103,6 @@ def handle_all_messages(message):
                     encontrado = True
         bot.send_message(message.chat.id, res if encontrado else "✅ No hay personal próximo a vencer.")
 
-    # BOTÓN: AYUDA
     elif "Ayuda" in text:
         ayuda_texto = (
             "❓ **AYUDA Y COMANDOS**\n\n"
@@ -120,7 +113,7 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO PARA ACTUALIZAR VUELO ---
+# --- 6. COMANDO /VUELO CON ULTRA-DIAGNÓSTICO ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
@@ -130,17 +123,26 @@ def reset_vuelo(message):
             return
             
         nombre_buscar = argumento[1].strip().upper()
-        doc = coleccion.find_one({"id": "data_principal"})
         
+        # BÚSQUEDA ROBUSTA: Intenta con ID, si no, toma el primero que encuentre
+        doc = coleccion.find_one({"id": "data_principal"})
         if not doc:
-            bot.reply_to(message, "⚠️ Error de Base de Datos: No existe el documento 'data_principal'.")
+            doc = coleccion.find_one() # Plan B: Agarrar cualquier documento
+            
+        if not doc:
+            bot.reply_to(message, "❌ Error fatal: No se encontró ningún documento en tu base de datos.")
             return
 
+        # Extraemos el identificador real del documento para el update
+        _id_documento = doc.get("_id")
+        id_logico = doc.get("id", "No tiene campo 'id'")
+        
         personal = doc.get("datos", {})
         encontrado = False
         categoria_destino = None
         key_original = None
 
+        # Buscar coincidencia
         for cat, tripulantes in personal.items():
             for nombre_db in tripulantes.keys():
                 if nombre_buscar in nombre_db.strip().upper() or nombre_db.strip().upper() in nombre_buscar:
@@ -154,41 +156,48 @@ def reset_vuelo(message):
         if encontrado:
             fecha_hoy = datetime.now().strftime("%d/%m/%Y")
             personal[categoria_destino][key_original] = fecha_hoy
-            coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
+            
+            # GUARDAR USANDO EL _ID ÚNICO DE MONGODB (Infalible)
+            resultado = coleccion.update_one({"_id": _id_documento}, {"$set": {"datos": personal}})
+            
+            # Mensaje de Diagnóstico de Guardado
+            diag = (
+                f"📊 **DIAGNÓSTICO DE MONGODB**\n"
+                f"• ID del Documento usado: `{id_logico}`\n"
+                f"• Documentos coincidentes: {resultado.matched_count}\n"
+                f"• Documentos modificados: {resultado.modified_count}\n\n"
+            )
+            
+            if resultado.modified_count > 0 or resultado.matched_count > 0:
+                diag += f"✅ **¡FECHA ACTUALIZADA!**\n• `{key_original}` cambiado a **{fecha_hoy}**."
+            else:
+                diag += "❌ **Error:** MongoDB encontró el registro pero rechazó la escritura (verifica permisos)."
+                
+            bot.reply_to(message, diag, parse_mode="Markdown")
+        else:
+            # Si no lo encuentra, te muestra los nombres que sí existen
+            todos_los_nombres = []
+            for c, t in personal.items():
+                todos_los_nombres.extend(t.keys())
+            lista = ", ".join([f"`{n}`" for n in todos_los_nombres[:8]])
             
             bot.reply_to(
                 message, 
-                f"✅ **PROCESADO EXITOSAMENTE**\n"
-                f"• **Tripulante:** `{key_original}`\n"
-                f"• **Nueva Fecha:** {fecha_hoy}\n\n"
-                f"💾 *Cambio sincronizado con la base de datos de MongoDB.*",
-                parse_mode="Markdown"
-            )
-        else:
-            nombres_disponibles = []
-            for cat, t in personal.items():
-                nombres_disponibles.extend(t.keys())
-            lista_nombres = ", ".join([f"`{n}`" for n in nombres_disponibles[:10]])
-            bot.reply_to(
-                message, 
-                f"❌ No encontré a **{nombre_buscar}**.\n\n"
-                f"📋 *Nombres en DB:* {lista_nombres}...",
+                f"❌ No encontré a '{nombre_buscar}' en la lista.\n\n"
+                f"📋 **Nombres que sí existen en tu DB:**\n{lista}",
                 parse_mode="Markdown"
             )
 
     except Exception as e:
-        bot.reply_to(message, f"💥 Error interno: `{str(e)}`", parse_mode="Markdown")
+        bot.reply_to(message, f"💥 Error interno en comando: `{str(e)}`", parse_mode="Markdown")
 
-# --- 7. EJECUCIÓN PRINCIPAL DEL SISTEMA ---
+# --- 7. EJECUCIÓN PRINCIPAL ---
 if __name__ == "__main__":
-    # Primero: Iniciamos Flask en segundo plano (hilo secundario)
     keep_alive()
-    print("🚀 Servidor Web Flask en segundo plano iniciado...")
-    
-    # Segundo: Corremos Telegram en el hilo principal del procesador.
-    # Esto asegura que Render no 'congele' el bot de Telegram.
+    print("🚀 Servidor Web Flask Activo...")
     print("🤖 Iniciando Polling de Telegram...")
     bot.infinity_polling(skip_pending=True)
+
 
 
 
