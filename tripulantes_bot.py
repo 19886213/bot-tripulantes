@@ -54,11 +54,11 @@ def calcular_vencimiento(f_str):
     except:
         return "⚪", 0, "ERROR"
 
-# --- 4. AUTO-POBLADOR DE LA NUEVA ESTRUCTURA ---
-def verificar_y_crear_db(message):
+# --- 4. AUTO-POBLADOR FORZADO ---
+def verificar_y_crear_db(chat_id):
     """Inserta los documentos individuales si la colección está vacía"""
     if coleccion.count_documents({}) == 0:
-        bot.send_message(message.chat.id, "⚡ **Estructura vacía detectada. Generando registros optimizados...**", parse_mode="Markdown")
+        bot.send_message(chat_id, "⚡ **Base de datos vacía detectada. Generando registros optimizados de tripulantes...**", parse_mode="Markdown")
         
         tripulacion_inicial = [
             # CAPITANES
@@ -111,18 +111,19 @@ def verificar_y_crear_db(message):
             {"nombre": "S2. JESUS DABOIN", "categoria": "AUXILIARES DE VUELO", "fecha": "07/05/2026"}
         ]
         coleccion.insert_many(tripulacion_inicial)
-        bot.send_message(message.chat.id, "✅ **Base de datos mapeada con éxito.**")
+        bot.send_message(chat_id, "✅ **Base de datos mapeada con éxito.**")
+        time.sleep(1)
 
 # --- 5. COMANDOS PRINCIPALES ---
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome(message):
-    verificar_y_crear_db(message)
+    verificar_y_crear_db(message.chat.id)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("📋 Lista General", "🚨 Alertas Críticas")
     markup.add("⚠️ Próximos a Vencer", "❓ Ayuda")
     bot.send_message(
         message.chat.id, 
-        "👨‍✈️ **SISTEMA DE CONTROL DE TRIPULANTES**\nSeleccione una opción:", 
+        "👨‍✈️ **SISTEMA DE CONTROL DE TRIPULANTES**\nSeleccione una opción del menú:", 
         reply_markup=markup, 
         parse_mode="Markdown"
     )
@@ -130,8 +131,15 @@ def send_welcome(message):
 # --- 6. MANEJADOR DE MENSAJES (MENÚ INTERIOR) ---
 @bot.message_handler(func=lambda msg: msg.text in ["📋 Lista General", "🚨 Alertas Críticas", "⚠️ Próximos a Vencer", "❓ Ayuda"])
 def handle_menu_buttons(message):
+    # Forzar verificación previa
+    verificar_y_crear_db(message.chat.id)
+    
     text = message.text
     todos = list(coleccion.find({}))
+
+    if not todos:
+        bot.send_message(message.chat.id, "❌ Error al intentar conectar o rellenar MongoDB. Intenta de nuevo.")
+        return
 
     if "Lista General" in text:
         categorias = {}
@@ -176,7 +184,7 @@ def handle_menu_buttons(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 7. COMANDO /VUELO SIMPLIFICADO ---
+# --- 7. COMANDO /VUELO ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
@@ -197,13 +205,10 @@ def reset_vuelo(message):
                 
         if tripulante_encontrado:
             fecha_hoy = datetime.now().strftime("%d/%m/%Y")
-            
-            # ACTUALIZACIÓN UNITARIA DIRECTA
             coleccion.update_one(
                 {"_id": tripulante_encontrado["_id"]}, 
                 {"$set": {"fecha": fecha_hoy}}
             )
-            
             bot.reply_to(
                 message, 
                 f"✅ **¡ACTUALIZACIÓN EXITOSA!**\n\n"
@@ -225,6 +230,7 @@ if __name__ == "__main__":
             bot.polling(none_stop=True, interval=2, timeout=40)
         except Exception:
             time.sleep(5)
+
 
 
 
