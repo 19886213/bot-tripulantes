@@ -70,7 +70,6 @@ def send_welcome(message):
 # --- 5. MANEJADOR DE MENSAJES (BOTONES) ---
 @bot.message_handler(func=lambda msg: True)
 def handle_all_messages(message):
-    # AJUSTE: Buscamos usando el ID real que está en tu Mongo con la barra invertida
     doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
     if not doc:
         bot.reply_to(message, "❌ Error: La colección en MongoDB está vacía.")
@@ -120,15 +119,13 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO /VUELO ADAPTADO AL ID CON ESCAPE ---
+# --- 6. COMANDO /VUELO CON BÚSQUEDA POR PALABRAS CLAVE ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
         argumento = message.text.split(maxsplit=1)
         
-        # Intentamos buscar prioritariamente por el ID real con la barra de escape de tu captura
         doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
-        
         if not doc:
             bot.reply_to(message, "❌ Error: No se encontraron documentos en MongoDB.")
             return
@@ -136,24 +133,35 @@ def reset_vuelo(message):
         _id_documento = doc.get("_id")
         personal = doc.get("datos", {})
 
+        # Si el usuario no escribe nombre, mandamos botones rápidos
         if len(argumento) < 2:
-            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup = types.InlineKeyboardMarkup(row_width=1)
             botones = []
+            # Listamos solo los primeros 15 para no saturar Telegram
+            contador = 0
             for cat, t in personal.items():
                 for nombre_db in t.keys():
-                    botones.append(types.InlineKeyboardButton(text=f"✈️ {nombre_db}", callback_data=f"upd_{nombre_db[:30]}"))
+                    if contador < 15:
+                        botones.append(types.InlineKeyboardButton(text=f"✈️ {nombre_db}", callback_data=f"upd_{nombre_db[:30]}"))
+                        contador += 1
             markup.add(*botones)
-            bot.reply_to(message, "📋 **Selecciona el tripulante a actualizar:**", reply_markup=markup, parse_mode="Markdown")
+            bot.reply_to(message, "📋 **Selecciona el tripulante directamente para actualizar:**", reply_markup=markup, parse_mode="Markdown")
             return
             
-        nombre_buscar = normalizar_texto(argumento[1])
+        # Limpiamos el texto que escribió el usuario y lo separamos en palabras
+        palabras_buscadas = normalizar_texto(argumento[1]).split()
+        
         encontrado = False
         categoria_destino = None
         key_original = None
 
+        # Búsqueda súper inteligente por palabras sueltas
         for cat, tripulantes in personal.items():
             for nombre_db in tripulantes.keys():
-                if nombre_buscar in normalizar_texto(nombre_db) or normalizar_texto(nombre_db) in nombre_buscar:
+                nombre_db_limpio = normalizar_texto(nombre_db)
+                
+                # Comprobamos si AL MENOS UNA de las palabras que escribió el usuario está en el nombre de la DB
+                if any(p in nombre_db_limpio for p in palabras_buscadas):
                     key_original = nombre_db
                     categoria_destino = cat
                     encontrado = True
@@ -164,18 +172,19 @@ def reset_vuelo(message):
             fecha_hoy = datetime.now().strftime("%d/%m/%Y")
             personal[categoria_destino][key_original] = fecha_hoy
             
-            # Sincronizamos usando el _ID único del objeto, que nunca falla
+            # Guardamos el cambio directamente por el _id único de MongoDB
             resultado = coleccion.update_one({"_id": _id_documento}, {"$set": {"datos": personal}})
             
             bot.reply_to(
                 message, 
                 f"✅ **¡ACTUALIZACIÓN EXITOSA!**\n\n"
                 f"• **Tripulante:** `{key_original}`\n"
-                f"• **Nueva Fecha:** `{fecha_hoy}`",
+                f"• **Nueva Fecha registrada:** `{fecha_hoy}`\n"
+                f"• **Registros modificados:** {resultado.modified_count}",
                 parse_mode="Markdown"
             )
         else:
-            bot.reply_to(message, f"❌ No encontré a **{argumento[1]}** en la lista de tripulantes de la DB.")
+            bot.reply_to(message, f"❌ No encontré a nadie que coincida con **{argumento[1]}**.")
 
     except Exception as e:
         bot.reply_to(message, f"💥 Error interno en comando: `{str(e)}`")
@@ -222,6 +231,7 @@ if __name__ == "__main__":
             bot.polling(none_stop=True, interval=1, timeout=60)
         except Exception as e:
             time.sleep(5)
+
 
 
 
