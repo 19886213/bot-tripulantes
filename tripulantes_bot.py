@@ -2,6 +2,7 @@ import telebot
 from telebot import types
 from datetime import datetime
 from pymongo import MongoClient
+from bson.objectid import ObjectId
 from flask import Flask
 from threading import Thread
 import os
@@ -32,6 +33,9 @@ MONGO_URI = "mongodb+srv://Alejosmv:17954966@alejosmv.ajwv4ej.mongodb.net/?retry
 client = MongoClient(MONGO_URI)
 db = client['sistema_vuelos']
 coleccion = db['tripulantes']
+
+# ID ÚNICO REAL DE TU CAPTURA DE PANTALLA (Inmune a fallos de texto)
+ID_DOCUMENTO_REAL = ObjectId("6a023ff3e91551fddc4b852a")
 
 # --- 3. FUNCIONES DE LIMPIEZA Y CÁLCULO ---
 def normalizar_texto(texto):
@@ -67,12 +71,17 @@ def send_welcome(message):
         parse_mode="Markdown"
     )
 
-# --- 5. MANEJADOR DE MENSAJES (BOTONES) ---
+# --- 5. MANEJADOR DE MENSAJES (BOTONES DEL TECLADO INFERIOR) ---
 @bot.message_handler(func=lambda msg: True)
 def handle_all_messages(message):
-    doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
+    # Buscamos directamente por su ObjectId único del sistema
+    doc = coleccion.find_one({"_id": ID_DOCUMENTO_REAL})
     if not doc:
-        bot.reply_to(message, "❌ Error: La colección en MongoDB está vacía.")
+        # Plan B de emergencia por si acaso
+        doc = coleccion.find_one()
+        
+    if not doc:
+        bot.reply_to(message, "❌ Error: No se encontró ningún documento en tu MongoDB.")
         return
     
     personal = doc.get("datos", {})
@@ -119,48 +128,42 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO /VUELO CON BÚSQUEDA POR PALABRAS CLAVE ---
+# --- 6. COMANDO /VUELO CON BÚSQUEDA ROBUSTA ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
         argumento = message.text.split(maxsplit=1)
         
-        doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
+        # Búsqueda directa e infalible por ObjectId
+        doc = coleccion.find_one({"_id": ID_DOCUMENTO_REAL})
         if not doc:
-            bot.reply_to(message, "❌ Error: No se encontraron documentos en MongoDB.")
-            return
+            doc = coleccion.find_one()
 
-        _id_documento = doc.get("_id")
         personal = doc.get("datos", {})
 
-        # Si el usuario no escribe nombre, mandamos botones rápidos
+        # Teclado en pantalla si no pone parámetros
         if len(argumento) < 2:
             markup = types.InlineKeyboardMarkup(row_width=1)
             botones = []
-            # Listamos solo los primeros 15 para no saturar Telegram
             contador = 0
             for cat, t in personal.items():
                 for nombre_db in t.keys():
                     if contador < 15:
-                        botones.append(types.InlineKeyboardButton(text=f"✈️ {nombre_db}", callback_data=f"upd_{nombre_db[:30]}"))
+                        # Guardamos los primeros caracteres para el identificador del botón
+                        botones.append(types.InlineKeyboardButton(text=f"✈️ {nombre_db}", callback_data=f"upd_{nombre_db[:25]}"))
                         contador += 1
             markup.add(*botones)
             bot.reply_to(message, "📋 **Selecciona el tripulante directamente para actualizar:**", reply_markup=markup, parse_mode="Markdown")
             return
             
-        # Limpiamos el texto que escribió el usuario y lo separamos en palabras
         palabras_buscadas = normalizar_texto(argumento[1]).split()
-        
         encontrado = False
         categoria_destino = None
         key_original = None
 
-        # Búsqueda súper inteligente por palabras sueltas
         for cat, tripulantes in personal.items():
             for nombre_db in tripulantes.keys():
                 nombre_db_limpio = normalizar_texto(nombre_db)
-                
-                # Comprobamos si AL MENOS UNA de las palabras que escribió el usuario está en el nombre de la DB
                 if any(p in nombre_db_limpio for p in palabras_buscadas):
                     key_original = nombre_db
                     categoria_destino = cat
@@ -172,15 +175,15 @@ def reset_vuelo(message):
             fecha_hoy = datetime.now().strftime("%d/%m/%Y")
             personal[categoria_destino][key_original] = fecha_hoy
             
-            # Guardamos el cambio directamente por el _id único de MongoDB
-            resultado = coleccion.update_one({"_id": _id_documento}, {"$set": {"datos": personal}})
+            # GUARDADO DIRECTO POR OBJECTID (Garantiza la modificación real en Atlas)
+            resultado = coleccion.update_one({"_id": ID_DOCUMENTO_REAL}, {"$set": {"datos": personal}})
             
             bot.reply_to(
                 message, 
-                f"✅ **¡ACTUALIZACIÓN EXITOSA!**\n\n"
+                f"✅ **¡PROCESADO CON EXCELENCIA!**\n\n"
                 f"• **Tripulante:** `{key_original}`\n"
-                f"• **Nueva Fecha registrada:** `{fecha_hoy}`\n"
-                f"• **Registros modificados:** {resultado.modified_count}",
+                f"• **Nueva Fecha:** `{fecha_hoy}`\n"
+                f"• **Docs modificados en Atlas:** {resultado.modified_count}",
                 parse_mode="Markdown"
             )
         else:
@@ -194,8 +197,7 @@ def reset_vuelo(message):
 def callback_actualizar_vuelo(call):
     try:
         nombre_limpio_callback = call.data.replace("upd_", "")
-        doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
-        _id_documento = doc.get("_id")
+        doc = coleccion.find_one({"_id": ID_DOCUMENTO_REAL}) or coleccion.find_one()
         personal = doc.get("datos", {})
         
         encontrado = False
@@ -210,7 +212,8 @@ def callback_actualizar_vuelo(call):
             if encontrado: break
             
         if encontrado:
-            coleccion.update_one({"_id": _id_documento}, {"$set": {"datos": personal}})
+            # Guardado directo por ObjectId
+            coleccion.update_one({"_id": ID_DOCUMENTO_REAL}, {"$set": {"datos": personal}})
             bot.answer_callback_query(call.id, text=f"Actualizado: {key_original}")
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
@@ -231,6 +234,7 @@ if __name__ == "__main__":
             bot.polling(none_stop=True, interval=1, timeout=60)
         except Exception as e:
             time.sleep(5)
+
 
 
 
