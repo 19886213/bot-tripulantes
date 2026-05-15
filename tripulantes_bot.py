@@ -63,7 +63,6 @@ def send_welcome(message):
 def handle_all_messages(message):
     doc = coleccion.find_one({"id": "data_principal"})
     if not doc:
-        # AQUÍ ESTABA EL ERROR DE LA LÍNEA 67. YA ESTÁ CORREGIDO Y CERRADO CORRECTAMENTE.
         bot.reply_to(message, "❌ Error: No se encontró el documento 'data_principal' en la DB.")
         return
     
@@ -115,59 +114,81 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO PARA ACTUALIZAR VUELO (CON DIAGNÓSTICO) ---
+# --- 6. COMANDO PARA ACTUALIZAR VUELO (BÚSQUEDA TOLERANTE A ERRORES) ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
-        nombre_buscar = message.text.split(maxsplit=1)[1].strip().upper()
+        # Tomamos el parámetro, quitamos espacios y pasamos a mayúsculas
+        argumento = message.text.split(maxsplit=1)
+        if len(argumento) < 2:
+            bot.reply_to(message, "⚠️ Formato incorrecto. Usa: `/vuelo NOMBRE`", parse_mode="Markdown")
+            return
+            
+        nombre_buscar = argumento[1].strip().upper()
         
+        # Intentamos obtener el documento de la DB
         doc = coleccion.find_one({"id": "data_principal"})
         if not doc:
-            bot.reply_to(message, "⚠️ Error técnico: No se encontró 'data_principal' en tu MongoDB.")
+            bot.reply_to(message, "⚠️ **Error de Base de Datos**: No existe el documento con `id: 'data_principal'`.")
             return
 
         personal = doc.get("datos", {})
         encontrado = False
+        categoria_destino = None
         key_original = None
 
-        for cat in personal:
-            nombres_normalizados = {k.strip().upper(): k for k in personal[cat].keys()}
-            if nombre_buscar in nombres_normalizados:
-                key_original = nombres_normalizados[nombre_buscar]
-                personal[cat][key_original] = datetime.now().strftime("%d/%m/%Y")
-                encontrado = True
+        # Buscamos de manera parcial o exacta en toda la estructura de datos
+        for cat, tripulantes in personal.items():
+            for nombre_db in tripulantes.keys():
+                # Comparamos limpiando ambos textos de espacios y mayúsculas
+                if nombre_buscar in nombre_db.strip().upper() or nombre_db.strip().upper() in nombre_buscar:
+                    key_original = nombre_db
+                    categoria_destino = cat
+                    encontrado = True
+                    break
+            if encontrado:
                 break
         
-        if not encontrado:
-            bot.reply_to(message, f"❌ El nombre **{nombre_buscar}** no existe en la DB.")
-            return
-
-        resultado_db = coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
-        
-        respuesta_diagnostico = (
-            f"📊 **DIAGNÓSTICO DE ACTUALIZACIÓN**\n"
-            f"• Tripulante detectado: `{key_original}`\n"
-            f"• Coincidencias en DB: {resultado_db.matched_count}\n"
-            f"• Modificados en DB: {resultado_db.modified_count}\n\n"
-        )
-        
-        if resultado_db.matched_count > 0:
-            respuesta_diagnostico += "✅ *¡Cambio confirmado y guardado con éxito en MongoDB!*"
-        else:
-            respuesta_diagnostico += "❌ *MongoDB rechazó la escritura.*"
+        if encontrado:
+            # Reemplazamos la fecha localmente
+            fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+            personal[categoria_destino][key_original] = fecha_hoy
             
-        bot.reply_to(message, respuesta_diagnostico, parse_mode="Markdown")
+            # Guardamos directamente en MongoDB
+            resultado = coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
+            
+            # Forzamos una respuesta clara del éxito
+            bot.reply_to(
+                message, 
+                f"✅ **PROCESADO EXITOSAMENTE**\n"
+                f"• **Tripulante:** `{key_original}`\n"
+                f"• **Nueva Fecha:** {fecha_hoy}\n\n"
+                f"💾 *Cambio sincronizado con la base de datos de MongoDB.*",
+                parse_mode="Markdown"
+            )
+        else:
+            # Si no lo encuentra, nos lista los nombres que sí tiene para ver cuál fue el error
+            nombres_disponibles = []
+            for cat, t in personal.items():
+                nombres_disponibles.extend(t.keys())
+            
+            lista_nombres = ", ".join([f"`{n}`" for n in nombres_disponibles[:10]])
+            bot.reply_to(
+                message, 
+                f"❌ No encontré a **{nombre_buscar}**.\n\n"
+                f"📋 *Nombres registrados en tu DB:* {lista_nombres}...",
+                parse_mode="Markdown"
+            )
 
-    except IndexError:
-        bot.reply_to(message, "⚠️ Formato incorrecto. Usa: `/vuelo NOMBRE`", parse_mode="Markdown")
     except Exception as e:
-        bot.reply_to(message, f"💥 Error inesperado: `{str(e)}`", parse_mode="Markdown")
+        bot.reply_to(message, f"💥 Error interno: `{str(e)}`", parse_mode="Markdown")
 
 # --- 7. INICIO DEL BOT ---
 if __name__ == "__main__":
     keep_alive()
     print("🚀 Bot iniciado...")
     bot.infinity_polling(skip_pending=True)
+
 
 
 
