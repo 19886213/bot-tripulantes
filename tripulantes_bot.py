@@ -6,8 +6,9 @@ from flask import Flask
 from threading import Thread
 import os
 import time
+import unicodedata
 
-# --- 1. SERVIDOR WEB (Estructura Base para Render) ---
+# --- 1. SERVIDOR WEB (Estructura base para Render) ---
 app = Flask('')
 
 @app.route('/')
@@ -15,7 +16,6 @@ def home():
     return "Bot de Control de Tripulantes: Activo"
 
 def run_flask():
-    # Render asigna el puerto 10000 por defecto
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -33,7 +33,15 @@ client = MongoClient(MONGO_URI)
 db = client['sistema_vuelos']
 coleccion = db['tripulantes']
 
-# --- 3. LÓGICA DE CÁLCULO ---
+# --- 3. FUNCIONES DE LIMPIEZA Y CÁLCULO ---
+def normalizar_texto(texto):
+    if not texto: return ""
+    texto_limpio = "".join(
+        c for c in unicodedata.normalize('NFD', str(texto))
+        if unicodedata.category(c) != 'Mn'
+    )
+    return texto_limpio.strip().upper()
+
 def calcular_vencimiento(f_str):
     try:
         f_limpia = str(f_str).strip().replace(" ", "")
@@ -62,7 +70,8 @@ def send_welcome(message):
 # --- 5. MANEJADOR DE MENSAJES (BOTONES) ---
 @bot.message_handler(func=lambda msg: True)
 def handle_all_messages(message):
-    doc = coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
+    # AJUSTE: Buscamos usando el ID real que está en tu Mongo con la barra invertida
+    doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
     if not doc:
         bot.reply_to(message, "❌ Error: La colección en MongoDB está vacía.")
         return
@@ -111,77 +120,109 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO /VUELO CON DIAGNÓSTICO SEGURO ---
+# --- 6. COMANDO /VUELO ADAPTADO AL ID CON ESCAPE ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
         argumento = message.text.split(maxsplit=1)
-        if len(argumento) < 2:
-            bot.reply_to(message, "⚠️ Formato incorrecto. Usa: `/vuelo NOMBRE`", parse_mode="Markdown")
-            return
-            
-        nombre_buscar = argumento[1].strip().upper()
         
-        doc = coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
+        # Intentamos buscar prioritariamente por el ID real con la barra de escape de tu captura
+        doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
+        
         if not doc:
-            bot.reply_to(message, "❌ Error fatal: No hay documentos en MongoDB.")
+            bot.reply_to(message, "❌ Error: No se encontraron documentos en MongoDB.")
             return
 
         _id_documento = doc.get("_id")
         personal = doc.get("datos", {})
+
+        if len(argumento) < 2:
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            botones = []
+            for cat, t in personal.items():
+                for nombre_db in t.keys():
+                    botones.append(types.InlineKeyboardButton(text=f"✈️ {nombre_db}", callback_data=f"upd_{nombre_db[:30]}"))
+            markup.add(*botones)
+            bot.reply_to(message, "📋 **Selecciona el tripulante a actualizar:**", reply_markup=markup, parse_mode="Markdown")
+            return
+            
+        nombre_buscar = normalizar_texto(argumento[1])
         encontrado = False
         categoria_destino = None
         key_original = None
 
         for cat, tripulantes in personal.items():
             for nombre_db in tripulantes.keys():
-                if nombre_buscar in nombre_db.strip().upper() or nombre_db.strip().upper() in nombre_buscar:
+                if nombre_buscar in normalizar_texto(nombre_db) or normalizar_texto(nombre_db) in nombre_buscar:
                     key_original = nombre_db
                     categoria_destino = cat
                     encontrado = True
                     break
-            if encontrado:
-                break
+            if encontrado: break
         
         if encontrado:
             fecha_hoy = datetime.now().strftime("%d/%m/%Y")
             personal[categoria_destino][key_original] = fecha_hoy
             
+            # Sincronizamos usando el _ID único del objeto, que nunca falla
             resultado = coleccion.update_one({"_id": _id_documento}, {"$set": {"datos": personal}})
             
-            diag = (
-                f"📊 **REPORTE DE BASE DE DATOS**\n"
-                f"• Documentos modificados: {resultado.modified_count}\n\n"
-                f"✅ **¡FECHA ACTUALIZADA!**\n• `{key_original}` cambiado a **{fecha_hoy}**."
-            )
-            bot.reply_to(message, diag, parse_mode="Markdown")
-        else:
-            todos_los_nombres = []
-            for c, t in personal.items():
-                todos_los_nombres.extend(t.keys())
-            lista = ", ".join([f"`{n}`" for n in todos_los_nombres[:6]])
             bot.reply_to(
                 message, 
-                f"❌ No se encontró a '{nombre_buscar}'.\n\n"
-                f"📋 **Lista en DB:** {lista}...",
+                f"✅ **¡ACTUALIZACIÓN EXITOSA!**\n\n"
+                f"• **Tripulante:** `{key_original}`\n"
+                f"• **Nueva Fecha:** `{fecha_hoy}`",
                 parse_mode="Markdown"
             )
+        else:
+            bot.reply_to(message, f"❌ No encontré a **{argumento[1]}** en la lista de tripulantes de la DB.")
 
     except Exception as e:
-        bot.reply_to(message, f"💥 Error interno: `{str(e)}`", parse_mode="Markdown")
+        bot.reply_to(message, f"💥 Error interno en comando: `{str(e)}`")
 
-# --- 7. BUCLE CONTINUO DE EJECUCIÓN (A PRUEBA DE CAÍDAS) ---
+# --- 7. MANEJADOR DE CLICS EN LOS BOTONES ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('upd_'))
+def callback_actualizar_vuelo(call):
+    try:
+        nombre_limpio_callback = call.data.replace("upd_", "")
+        doc = coleccion.find_one({"id": "data_principal\\"}) or coleccion.find_one({"id": "data_principal"}) or coleccion.find_one()
+        _id_documento = doc.get("_id")
+        personal = doc.get("datos", {})
+        
+        encontrado = False
+        for cat, t in personal.items():
+            for nombre_db in t.keys():
+                if nombre_db.startswith(nombre_limpio_callback) or nombre_limpio_callback in nombre_db:
+                    fecha_hoy = datetime.now().strftime("%d/%m/%Y")
+                    personal[cat][nombre_db] = fecha_hoy
+                    encontrado = True
+                    key_original = nombre_db
+                    break
+            if encontrado: break
+            
+        if encontrado:
+            coleccion.update_one({"_id": _id_documento}, {"$set": {"datos": personal}})
+            bot.answer_callback_query(call.id, text=f"Actualizado: {key_original}")
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=f"✅ **¡ACTUALIZACIÓN EXITOSA!**\n\n• **Tripulante:** `{key_original}`\n• **Nueva Fecha:** `{fecha_hoy}`",
+                parse_mode="Markdown"
+            )
+        else:
+            bot.answer_callback_query(call.id, text="Error al procesar el nombre.")
+    except Exception as e:
+        print(f"Error en callback: {e}")
+
+# --- 8. BUCLE CONTINUO DE EJECUCIÓN ---
 if __name__ == "__main__":
-    # Levanta el servidor Flask de Render de forma segura
     keep_alive()
-    
-    # Bucle infinito para mantener el Polling de Telegram activo pase lo que pase
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=60)
         except Exception as e:
-            print(f"Reconectando Bot por error: {e}")
             time.sleep(5)
+
 
 
 
