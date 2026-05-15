@@ -23,7 +23,7 @@ def keep_alive():
     t.start()
 
 # --- 2. CONFIGURACIÓN DEL BOT Y BASE DE DATOS ---
-# Importante: El TOKEN se lee desde 'Environment Variables' en Render
+# El TOKEN se lee desde 'Environment Variables' en Render
 TOKEN = os.environ.get('TELEGRAM_TOKEN')
 bot = telebot.TeleBot(TOKEN)
 
@@ -115,27 +115,36 @@ def handle_all_messages(message):
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 6. COMANDO PARA ACTUALIZAR VUELO ---
+# --- 6. COMANDO PARA ACTUALIZAR VUELO (SÚPER INTELIGENTE) ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
-        nombre_buscar = message.text.split(maxsplit=1)[1].upper()
+        # Extraemos el nombre enviado, quitamos espacios a los lados y lo pasamos a mayúsculas
+        nombre_buscar = message.text.split(maxsplit=1)[1].strip().upper()
         doc = coleccion.find_one({"id": "data_principal"})
         personal = doc["datos"]
         encontrado = False
 
         for cat in personal:
-            if nombre_buscar in personal[cat]:
-                # Actualizar a la fecha de hoy
-                personal[cat][nombre_buscar] = datetime.now().strftime("%d/%m/%Y")
+            # Creamos un diccionario temporal pasando las llaves de la DB a mayúsculas y sin espacios
+            # Esto mapea: {"CAMORUCO": "Camoruco "} o {"CAMORUCO": "camoruco"}
+            nombres_normalizados = {k.strip().upper(): k for k in personal[cat].keys()}
+            
+            if nombre_buscar in nombres_normalizados:
+                # Recuperamos el nombre exacto original que está guardado en tu Mongo
+                key_original = nombres_normalizados[nombre_buscar]
+                # Ponemos la fecha de hoy
+                personal[cat][key_original] = datetime.now().strftime("%d/%m/%Y")
                 encontrado = True
                 break
         
         if encontrado:
+            # Guardamos los cambios en MongoDB
             coleccion.update_one({"id": "data_principal"}, {"$set": {"datos": personal}})
-            bot.reply_to(message, f"✅ **{nombre_buscar}** actualizado con éxito.")
+            bot.reply_to(message, f"✅ **{nombre_buscar}** actualizado con éxito a la fecha de hoy.")
         else:
-            bot.reply_to(message, f"❌ El nombre **{nombre_buscar}** no existe en la lista.")
+            bot.reply_to(message, f"❌ El nombre **{nombre_buscar}** no se encontró en la lista. Verifica cómo está escrito en la base de datos.")
+            
     except IndexError:
         bot.reply_to(message, "⚠️ Formato incorrecto. Usa: `/vuelo NOMBRE`", parse_mode="Markdown")
 
@@ -143,8 +152,9 @@ def reset_vuelo(message):
 if __name__ == "__main__":
     keep_alive()
     print("🚀 Bot iniciado...")
-    # skip_pending=True ignora mensajes viejos y ayuda a evitar el error 409 Conflict
+    # skip_pending=True limpia el historial para evitar el Error 409 Conflict
     bot.infinity_polling(skip_pending=True)
+
 
 
 
