@@ -5,6 +5,7 @@ from pymongo import MongoClient
 import os
 import time
 import unicodedata
+import re
 from flask import Flask
 from threading import Thread
 
@@ -131,9 +132,7 @@ def send_welcome(message):
 # --- 6. MANEJADOR DE MENSAJES (MENÚ INTERIOR) ---
 @bot.message_handler(func=lambda msg: msg.text in ["📋 Lista General", "🚨 Alertas Críticas", "⚠️ Próximos a Vencer", "❓ Ayuda"])
 def handle_menu_buttons(message):
-    # Forzar verificación previa
     verificar_y_crear_db(message.chat.id)
-    
     text = message.text
     todos = list(coleccion.find({}))
 
@@ -179,21 +178,49 @@ def handle_menu_buttons(message):
     elif "Ayuda" in text:
         ayuda_texto = (
             "❓ **AYUDA Y COMANDOS**\n\n"
-            "• Escribe `/vuelo NOMBRE` para renovar la fecha de alguien a hoy.\n"
-            "• Ejemplo: `/vuelo camoruco` o `/vuelo elvis`"
+            "• `/vuelo NOMBRE` ➔ Registra vuelo con fecha de **hoy**.\n"
+            "• `/vuelo NOMBRE DD/MM/AAAA` ➔ Registra vuelo con **fecha pasada**.\n\n"
+            "**Ejemplos:**\n"
+            "• `/vuelo camoruco`\n"
+            "• `/vuelo camoruco 15/05/2026`"
         )
         bot.send_message(message.chat.id, ayuda_texto, parse_mode="Markdown")
 
-# --- 7. COMANDO /VUELO ---
+# --- 7. COMANDO /VUELO INTELIGENTE (OPCIÓN DE FECHA MANUAL) ---
 @bot.message_handler(commands=['vuelo'])
 def reset_vuelo(message):
     try:
-        argumento = message.text.split(maxsplit=1)
-        if len(argumento) < 2:
-            bot.reply_to(message, "⚠️ Usa: `/vuelo NOMBRE` (Ej: `/vuelo camoruco`)")
+        partes = message.text.split(maxsplit=1)
+        if len(partes) < 2:
+            bot.reply_to(message, "⚠️ Usa:\n• `/vuelo NOMBRE` (para hoy)\n• `/vuelo NOMBRE DD/MM/AAAA` (fecha pasada)")
             return
             
-        palabras_buscadas = normalizar_texto(argumento[1]).split()
+        texto_completo = partes[1].strip()
+        
+        # Intentar extraer si el mensaje termina en una estructura de fecha (DD/MM/AAAA)
+        match_fecha = re.search(r'(\d{1,2}/\d{1,2}/\d{4})$', texto_completo)
+        
+        if match_fecha:
+            fecha_destino = match_fecha.group(1)
+            # El nombre es todo lo anterior a la fecha encontrada
+            nombre_buscado = texto_completo[:match_fecha.start()].strip()
+            
+            # Validar que la fecha sea real y correcta
+            try:
+                datetime.strptime(fecha_destino, "%d/%m/%Y")
+            except ValueError:
+                bot.reply_to(message, "❌ **Formato de fecha inválido.** Asegúrate de usar el formato correcto: `DD/MM/AAAA` (Ejemplo: `15/05/2026`)")
+                return
+        else:
+            # Si no hay fecha al final, se toma el texto entero como nombre y la fecha es HOY
+            nombre_buscado = texto_completo
+            fecha_destino = datetime.now().strftime("%d/%m/%Y")
+            
+        palabras_buscadas = normalizar_texto(nombre_buscado).split()
+        if not palabras_buscadas:
+            bot.reply_to(message, "⚠️ Por favor ingresa el nombre del tripulante.")
+            return
+
         todos = list(coleccion.find({}))
         tripulante_encontrado = None
         
@@ -204,20 +231,19 @@ def reset_vuelo(message):
                 break
                 
         if tripulante_encontrado:
-            fecha_hoy = datetime.now().strftime("%d/%m/%Y")
             coleccion.update_one(
                 {"_id": tripulante_encontrado["_id"]}, 
-                {"$set": {"fecha": fecha_hoy}}
+                {"$set": {"fecha": fecha_destino}}
             )
             bot.reply_to(
                 message, 
                 f"✅ **¡ACTUALIZACIÓN EXITOSA!**\n\n"
                 f"• **Tripulante:** `{tripulante_encontrado['nombre']}`\n"
-                f"• **Nueva Fecha:** `{fecha_hoy}`",
+                f"• **Fecha Registrada:** `{fecha_destino}`",
                 parse_mode="Markdown"
             )
         else:
-            bot.reply_to(message, f"❌ No se encontró coincidencia para: **{argumento[1]}**")
+            bot.reply_to(message, f"❌ No se encontró coincidencia para: **{nombre_buscado}**")
 
     except Exception as e:
         bot.reply_to(message, f"💥 Error: `{str(e)}`")
@@ -230,6 +256,7 @@ if __name__ == "__main__":
             bot.polling(none_stop=True, interval=2, timeout=40)
         except Exception:
             time.sleep(5)
+
 
 
 
